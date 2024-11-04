@@ -8,7 +8,7 @@ import {
 } from 'typeorm';
 import { ProductImage } from './index';
 
-@Entity()
+@Entity({ name: 'products' }) // renombra la entidad para que la tabla en bbdd se guarde asi
 export class Product {
   @PrimaryGeneratedColumn('uuid')
   id: string;

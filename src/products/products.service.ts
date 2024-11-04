@@ -217,20 +217,31 @@ export class ProductsService {
   }
 
   async deleteAllProducts() {
-    const query = this.productRepository.createQueryBuilder('product');
     if (process.env.NODE_ENV !== 'develop') {
       throw new ForbiddenException(
         'This action can only be performed in the development environment.',
       );
     }
 
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
     try {
-      return await query
-        .delete() // Elimina todo
-        .where({})
-        .execute();
+      // Primero, elimina todos los registros de la tabla product
+      await queryRunner.manager.delete(Product, {});
+
+      // Luego, usa `TRUNCATE TABLE` para reiniciar el autoincremento
+      await queryRunner.query(
+        `TRUNCATE TABLE product RESTART IDENTITY CASCADE`,
+      );
+
+      await queryRunner.commitTransaction(); // Confirma la transacción si todo va bien
     } catch (error) {
+      await queryRunner.rollbackTransaction(); // Revierte la transacción en caso de error
       this.handleDBExceptions(error);
+    } finally {
+      await queryRunner.release(); // Libera el queryRunner al finalizar
     }
   }
 }
