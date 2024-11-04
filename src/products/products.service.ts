@@ -1,18 +1,19 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { isUUID } from 'class-validator';
+
+import { Product, ProductImage } from './entities';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { Product } from './entities/product.entity';
-import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Repository } from 'typeorm';
-import { isString, isUUID } from 'class-validator';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
-import { title } from 'process';
 
 @Injectable()
 export class ProductsService {
@@ -20,29 +21,55 @@ export class ProductsService {
   constructor(
     @InjectRepository(Product) // Se inyecta el repositorio para poder usar las interacciones con bbdd
     private readonly productRepository: Repository<Product>,
+
+    @InjectRepository(ProductImage) // Se inyecta el repositorio para poder usar las interacciones con bbdd
+    private readonly productImageRepository: Repository<ProductImage>,
+
+    private readonly dataSource: DataSource, // Datos de la operacion
   ) {}
   async create(createProductDto: CreateProductDto) {
+    const { images = [], ...productDetails } = createProductDto;
     try {
       // const product: Product = new Product(); // hay formas mas correctas de hacerlo
-      const product: Product = this.productRepository.create(createProductDto); // crea la instancia del producto, por eso es sincrono
+      const product: Product = this.productRepository.create({
+        ...productDetails,
+        images: images.map((imageUrl) =>
+          this.productImageRepository.create({ url: imageUrl }),
+        ),
+      }); // crea la instancia del producto, por eso es sincrono
+
       await this.productRepository.save(product);
 
-      return product;
+      return { ...product, images };
     } catch (error) {
       this.handleDBExceptions(error);
     }
   }
 
-  findAll(paginationDto: PaginationDto) {
+  async findAll(paginationDto: PaginationDto) {
     const { limit, offset } = paginationDto;
     try {
-      return this.productRepository.find({
+      const allProducts = await this.productRepository.find({
         where: { status: true },
         take: limit,
         skip: offset,
         order: { slug: 'ASC' },
-        // TODO: relaciones
+        relations: {
+          images: true,
+        },
       });
+
+      // Esta forma es mas facil de EntityMetadataNotFoundError, pero la de abajo es mas especifica
+      // return allProducts.map((product) => ({
+      //   ...product,
+      //   images: product.images.map((image) => image.url),
+      // }));
+
+      // Transforma la salida para no enviar mas informacion de la necesaria // Realmente no es necesario hacer
+      return allProducts.map(({ images, ...rest }) => ({
+        ...rest,
+        images: images.map((image) => image.url),
+      }));
     } catch (error) {
       this.handleDBExceptions(error);
     }
@@ -88,7 +115,7 @@ export class ProductsService {
       });
     } else {
       filterBy = 'title or slug';
-      const queryBuilder = this.productRepository.createQueryBuilder();
+      const queryBuilder = this.productRepository.createQueryBuilder('prod');
       product = await queryBuilder
         .where(
           // 'LOWER(title) = LOWER(:title) OR LOWER(slug) = LOWER(:slug)', // Lower para ignorar mayusculas
@@ -96,6 +123,7 @@ export class ProductsService {
           'LOWER(title) = LOWER(:searchTerm) OR slug = :searchTerm', // Slug siempre esta en minus
           { searchTerm: searchTerm.toLowerCase() }, // Convertir el término de búsqueda a minúsculas // Lo mismo pero mas reducido
         )
+        .leftJoinAndSelect('prod.images', 'images') // primer param es a lo que accedemos (definido en el qurybuilder), el segundo el alias
         .getOne(); // Obtiene un único resultado en caso de haber varios
     }
 
@@ -107,22 +135,55 @@ export class ProductsService {
     return product;
   }
 
+  async findOnePlain(term: string) {
+    const { images = [], ...rest } = await this.findOne(term);
+    return {
+      ...rest,
+      images: images.map((image) => image.url),
+    };
+  }
+
   async update(id: string, updateProductDto: UpdateProductDto) {
+    const { images, ...productToUpdate } = updateProductDto;
+
+    const product: Product = await this.productRepository.preload({
+      id,
+      ...productToUpdate,
+    });
+
+    if (!product)
+      throw new NotFoundException(`Product with id ${id} not found`);
+
+    // Create query runner
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect(); // conexion a bbdd
+    await queryRunner.startTransaction(); // Inicializar transaccion
+
     try {
-      const product: Product = await this.productRepository.preload({
-        // Preload busca un objeto por id y las carga usando los datos pasados.
-        // Busca el producto y actualiza el objeto
-        id: id,
-        ...updateProductDto,
-      });
+      // Si vienen nuevas imagenes es porque se tienen que actualizar por lo tanto borramos las anteriores y creamos las nuevas
+      if (images) {
+        // si vienen imagenes borramos las imagenes antiguas
+        // borra de la tabla "ProductImage" donde id = id enviado por parametro "el del porducto"
+        await queryRunner.manager.delete(ProductImage, { product: { id } }); // Entidad afectada , criterio de eliminacion
 
-      if (!product)
-        throw new NotFoundException(`Product with id ${id} not found`);
+        // Se añaden las nuevas imagenes para guardar mas adelante
+        product.images = images.map((imageUrl) =>
+          this.productImageRepository.create({ url: imageUrl }),
+        );
+      }
 
-      const updatedProduct = await this.productRepository.save(product);
+      await queryRunner.manager.save(product); // Prepara la consulta para hacerse, pero hasta que no se haga commit no se ejecuta
+      // const updatedProduct = await this.productRepository.save(product);
 
-      return updatedProduct;
+      await queryRunner.commitTransaction(); // Se ejecutan todas las consultas
+      await queryRunner.release; // Se cierra queryRunner porque se termino de utilizar
+
+      return this.findOnePlain(id);
+      // return updatedProduct;
     } catch (error) {
+      await queryRunner.rollbackTransaction();
+      await queryRunner.release; // Se cierra queryRunner porque se termino de utilizar
+
       this.handleDBExceptions(error);
     }
   }
@@ -130,12 +191,16 @@ export class ProductsService {
   async remove(searchTerm: string) {
     const product: Product = await this.findOne(searchTerm);
     const id = product.id;
-    // Borrar permanentemente el registro
-    // const deleted = await this.productRepository.remove(product);
-
-    // Marcar el registro como deshabilitado
-    product.status = false;
-    const deleted = await this.productRepository.save(product);
+    const deleteSoft = false;
+    let deleted;
+    if (!deleteSoft) {
+      // Borrar permanentemente el registro
+      deleted = await this.productRepository.remove(product);
+    } else {
+      // Marcar el registro como deshabilitado
+      product.status = false;
+      deleted = await this.productRepository.save(product);
+    }
 
     deleted.id = id;
     return deleted;
@@ -149,5 +214,23 @@ export class ProductsService {
     throw new InternalServerErrorException(
       'Unexpected error on product controller',
     );
+  }
+
+  async deleteAllProducts() {
+    const query = this.productRepository.createQueryBuilder('product');
+    if (process.env.NODE_ENV !== 'develop') {
+      throw new ForbiddenException(
+        'This action can only be performed in the development environment.',
+      );
+    }
+
+    try {
+      return await query
+        .delete() // Elimina todo
+        .where({})
+        .execute();
+    } catch (error) {
+      this.handleDBExceptions(error);
+    }
   }
 }

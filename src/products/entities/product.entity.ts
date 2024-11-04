@@ -3,8 +3,10 @@ import {
   BeforeUpdate,
   Column,
   Entity,
+  OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { ProductImage } from './index';
 
 @Entity()
 export class Product {
@@ -52,6 +54,17 @@ export class Product {
   tags: string[];
 
   // images
+  // un producto puede tener varias imagenes
+  //prettier-ignore
+  @OneToMany(
+    () => ProductImage,
+    (productImage) => productImage.product, 
+    {
+        cascade: true, // Para eliminar en cascada
+        eager: true // Trae las relaciones si no se usa "queryBuilder"
+    } 
+  )
+  images?: ProductImage[]; // Se almacenan como array
 
   @Column('boolean', {
     default: true, // Por defecto, el producto estará activo

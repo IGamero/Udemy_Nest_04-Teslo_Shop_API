@@ -47,4 +47,9 @@ export class CreateProductDto {
   @IsArray()
   @IsOptional() // Aun siendo obligatorio, tiene un valor por defecto, por lo tanto no es obligatorio en la entidad introducirlo
   tags: string[];
+
+  @IsString({ each: true })
+  @IsArray()
+  @IsOptional()
+  images?: string[];
 }

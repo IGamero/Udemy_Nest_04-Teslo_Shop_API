@@ -23,7 +23,7 @@ export class ProductsController {
     const product = await this.productsService.create(createProductDto);
     return {
       statusCode: 200,
-      message: 'porducto created',
+      message: 'product created',
       // product,
       // data: product,
       data: { product }, // data: { product: { productData }}
@@ -45,7 +45,7 @@ export class ProductsController {
 
   @Get(':searchTerm')
   findOne(@Param('searchTerm') searchTerm: string) {
-    return this.productsService.findOne(searchTerm);
+    return this.productsService.findOnePlain(searchTerm);
   }
 
   @Patch(':id')
