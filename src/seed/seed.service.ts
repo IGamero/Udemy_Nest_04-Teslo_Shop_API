@@ -12,20 +12,24 @@ export class SeedService {
   }
 
   private async insertSeed() {
-    this.productsService.deleteAllProducts();
+    try {
+      this.productsService.deleteAllProducts();
 
-    const seedProducts: CreateProductDto[] = initialData.products;
+      const seedProducts: CreateProductDto[] = initialData.products;
 
-    // Creamos un array de promesas
-    const insertPromises = [];
-    seedProducts.forEach((product) => {
-      insertPromises.push(this.productsService.create(product));
-    });
+      // Creamos un array de promesas
+      const insertPromises = [];
+      seedProducts.forEach((product) => {
+        insertPromises.push(this.productsService.create(product));
+      });
 
-    // ejecutamos todas las promesas
-    // de este modo se hacen X consultas, pero todas van a ser al mismo tiempo
-    const seedResults = await Promise.all(insertPromises);
+      // ejecutamos todas las promesas
+      // de este modo se hacen X consultas, pero todas van a ser al mismo tiempo
+      const seedResults = await Promise.all(insertPromises);
 
-    return seedResults;
+      return seedResults;
+    } catch (error) {
+      console.log(error);
+    }
   }
 }

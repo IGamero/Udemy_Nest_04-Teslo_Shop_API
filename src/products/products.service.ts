@@ -233,7 +233,7 @@ export class ProductsService {
 
       // Luego, usa `TRUNCATE TABLE` para reiniciar el autoincremento
       await queryRunner.query(
-        `TRUNCATE TABLE product RESTART IDENTITY CASCADE`,
+        `TRUNCATE TABLE products RESTART IDENTITY CASCADE`,
       );
 
       await queryRunner.commitTransaction(); // Confirma la transacción si todo va bien

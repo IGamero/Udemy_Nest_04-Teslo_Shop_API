@@ -24,11 +24,12 @@
 
 6. Ejecutar SEED
 
-```
-localhost:3000/api/seed
-```
+   ```
+   localhost:3000/api/seed
+   ```
 
 7. Levantar la app
+
    ```
    yarn start:dev
    ```
